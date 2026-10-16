@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>STORMFALL — Battle Royale</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%230a0e14'/%3E%3Cpath d='M16 5l9 11-9 11-9-11z' fill='%23ffb400'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="css/style.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+    "rapier": "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.13.1/rapier.es.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app">
+  <canvas id="game"></canvas>
+
+  <!-- ================= HUD ================= -->
+  <div id="hud" class="hidden">
+    <!-- Crosshair -->
+    <div id="crosshair">
+      <span class="ch ch-t"></span>
+      <span class="ch ch-b"></span>
+      <span class="ch ch-l"></span>
+      <span class="ch ch-r"></span>
+      <span class="ch-dot"></span>
+    </div>
+    <div id="hitmarker"></div>
+    <div id="damage-numbers"></div>
+    <div id="scope" class="hidden">
+      <div class="scope-ring"></div>
+      <div class="scope-lines"></div>
+    </div>
+
+    <!-- Compass -->
+    <div id="compass"><div id="compass-strip"></div><div class="compass-caret"></div></div>
+
+    <!-- Top bar -->
+    <div id="topbar">
+      <div class="stat-block">
+        <span class="stat-num" id="alive-count">60</span>
+        <span class="stat-lbl">ALIVE</span>
+      </div>
+      <div class="stat-block">
+        <span class="stat-num" id="kill-count">0</span>
+        <span class="stat-lbl">KILLS</span>
+      </div>
+      <div class="stat-block" id="zone-block">
+        <span class="stat-num" id="zone-phase">1</span>
+        <span class="stat-lbl" id="zone-label">ZONE</span>
+      </div>
+    </div>
+
+    <!-- Kill feed -->
+    <div id="killfeed"></div>
+
+    <!-- Zone / storm banner -->
+    <div id="zone-banner" class="hidden"></div>
+
+    <!-- Interaction prompt -->
+    <div id="prompt" class="hidden"><span id="prompt-key">F</span><span id="prompt-text">Pick up</span></div>
+
+    <!-- Loot pickup toast / inventory strip -->
+    <div id="inventory">
+      <div class="slot" data-slot="1"><span class="slot-key">1</span><span class="slot-name">—</span></div>
+      <div class="slot" data-slot="2"><span class="slot-key">2</span><span class="slot-name">—</span></div>
+      <div class="slot" data-slot="3"><span class="slot-key">3</span><span class="slot-name">—</span></div>
+    </div>
+
+    <!-- Utility counts -->
+    <div id="utility">
+      <div class="util"><span class="util-key">H</span><span id="med-count">0</span></div>
+      <div class="util"><span class="util-key">G</span><span id="gren-count">0</span></div>
+    </div>
+
+    <!-- Backpack / inventory panel (Tab) -->
+    <div id="backpack" class="hidden">
+      <h3>INVENTORY</h3>
+      <div class="bp-row"><span>Weapons</span>
+        <div id="bp-weapons"></div>
+      </div>
+      <div class="bp-row"><span>Ammo</span><div id="bp-ammo"></div></div>
+      <div class="bp-row"><span>Utility</span><div id="bp-util"></div></div>
+    </div>
+
+    <!-- Bottom-left: vitals -->
+    <div id="vitals">
+      <div class="bar-row">
+        <div class="bar-label">HP</div>
+        <div class="bar"><div class="bar-fill hp" id="hp-fill"></div><span class="bar-text" id="hp-text">100</span></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-label">AP</div>
+        <div class="bar"><div class="bar-fill ap" id="ap-fill"></div><span class="bar-text" id="ap-text">0</span></div>
+      </div>
+      <div class="bar-row" id="stamina-row">
+        <div class="bar-label">ST</div>
+        <div class="bar small"><div class="bar-fill st" id="st-fill"></div></div>
+      </div>
+    </div>
+
+    <!-- Bottom-right: weapon -->
+    <div id="weapon-hud">
+      <div id="weapon-name">—</div>
+      <div id="ammo-row"><span id="mag-ammo">0</span><span id="ammo-sep">/</span><span id="reserve-ammo">0</span></div>
+      <div id="reload-hint" class="hidden">RELOADING…</div>
+    </div>
+
+    <!-- Bottom-center: minimap -->
+    <div id="minimap-wrap">
+      <canvas id="minimap" width="220" height="220"></canvas>
+      <div id="minimap-compass">N</div>
+    </div>
+
+    <!-- Heal channel -->
+    <div id="heal-bar" class="hidden"><div id="heal-fill"></div><span>HEALING</span></div>
+
+    <!-- Damage vignette -->
+    <div id="damage-vignette"></div>
+    <div id="storm-vignette"></div>
+    <div id="vignette"></div>
+
+    <div id="lowhp"></div>
+
+    <div id="hint">
+      <span>WASD</span> move · <span>SHIFT</span> sprint · <span>SPACE</span> jump/vault · <span>C</span> crouch/slide ·
+      <span>LMB</span> fire · <span>R</span> reload · <span>G</span> grenade · <span>1-3</span> weapons ·
+      <span>F</span> pickup · <span>H</span> medkit · <span>TAB</span> inventory · <span>V</span> camera · <span>ESC</span> pause
+    </div>
+  </div>
+
+  <!-- ================= MENU ================= -->
+  <div id="menu">
+    <div class="menu-bg"></div>
+    <div class="menu-scan"></div>
+    <div class="menu-panel">
+      <div class="menu-brand">
+        <h1 class="logo">STORM<span>FALL</span></h1>
+        <p class="tag">BATTLE ROYALE · up to 60 players · one survivor</p>
+      </div>
+
+      <div class="mode-select">
+        <button class="mode active" data-bots="39"><b>SOLO</b><span>vs 39 bots</span></button>
+        <button class="mode" data-bots="49"><b>DUO</b><span>vs 49 bots</span></button>
+        <button class="mode" data-bots="59"><b>SQUAD</b><span>vs 59 bots</span></button>
+      </div>
+
+      <div class="menu-buttons">
+        <button id="btn-play" class="btn primary">DEPLOY</button>
+        <button id="btn-howto" class="btn">HOW TO PLAY</button>
+      </div>
+
+      <div class="menu-opts">
+        <label class="opt"><input type="checkbox" id="opt-mute" /> Mute audio</label>
+        <label class="opt"><input type="checkbox" id="opt-shadows" checked /> Shadows</label>
+        <label class="opt">Bots <input type="range" id="opt-bots" min="10" max="59" value="39" /></label>
+      </div>
+
+      <div id="loader" class="loader hidden"><div class="spinner"></div><span>Preparing the island…</span></div>
+      <p class="credit">Three.js · WebGL · runs entirely in your browser</p>
+    </div>
+
+    <div id="howto" class="howto hidden">
+      <div class="howto-panel">
+        <h2>HOW TO PLAY</h2>
+        <div class="howto-grid">
+          <div><b>Objective</b><p>Be the last one standing as the storm closes in.</p></div>
+          <div><b>Controls</b><p><kbd>WASD</kbd> move, <kbd>Mouse</kbd> aim, <kbd>LMB</kbd> fire, <kbd>RMB</kbd> aim/scope, <kbd>R</kbd> reload, <kbd>Space</kbd> jump/vault, <kbd>C</kbd> crouch/slide, <kbd>Shift</kbd> sprint, <kbd>G</kbd> grenade, <kbd>1-3</kbd> swap weapon, <kbd>Tab</kbd> inventory, <kbd>V</kbd> camera, <kbd>F</kbd> pick up, <kbd>H</kbd> medkit, <kbd>Esc</kbd> pause.</p></div>
+          <div><b>Loot</b><p>Walk over glowing crates and press <kbd>F</kbd> to grab weapons, ammo, armor and meds.</p></div>
+          <div><b>The Storm</b><p>The safe zone shrinks in phases. Outside it you take damage. Watch the timer.</p></div>
+          <div><b>Combat</b><p>Headshots deal more damage. Armor absorbs damage. Aim for the head.</p></div>
+          <div><b>Revive</b><p>There is no revive. Loot fast, fight smart.</p></div>
+        </div>
+        <button id="btn-howto-close" class="btn primary">GOT IT</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= PAUSE ================= -->
+  <div id="pause" class="overlay hidden">
+    <div class="overlay-panel">
+      <h2>PAUSED</h2>
+      <button id="btn-resume" class="btn primary">RESUME</button>
+      <button id="btn-quit" class="btn">LEAVE MATCH</button>
+      <label class="opt"><input type="checkbox" id="opt-mute2" /> Mute audio</label>
+    </div>
+  </div>
+
+  <!-- ================= END ================= -->
+  <div id="end" class="overlay hidden">
+    <div class="overlay-panel end-panel">
+      <h1 id="end-title">VICTORY</h1>
+      <p id="end-sub">#1 out of 60</p>
+      <div class="end-stats">
+        <div><span id="es-kills">0</span><label>KILLS</label></div>
+        <div><span id="es-damage">0</span><label>DAMAGE</label></div>
+        <div><span id="es-time">0:00</span><label>SURVIVED</label></div>
+        <div><span id="es-place">#1</span><label>PLACE</label></div>
+      </div>
+      <button id="btn-again" class="btn primary">PLAY AGAIN</button>
+    </div>
+  </div>
+
+  <!-- Pointer-lock prompt -->
+  <div id="click-to-play" class="hidden">CLICK TO RESUME</div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
