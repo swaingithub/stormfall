@@ -5,11 +5,48 @@ import { rand, randInt, choice, clamp, dist2D } from './utils.js';
 export const WORLD_HALF = 300;
 const EYE_HEIGHT = 1.6;
 
+/** Meters per texture repeat — keeps plaster/ribs/containers at real-world scale. */
+const UV_TILE = 3;
+
+function scaleBoxUVs(g, sx, sy, sz, tile = UV_TILE) {
+  // BoxGeometry emits 4 verts per face in order: +x, -x, +y, -y, +z, -z
+  const uv = g.attributes.uv;
+  const dims = [[sz, sy], [sz, sy], [sx, sz], [sx, sz], [sx, sy], [sx, sy]];
+  for (let f = 0; f < 6; f++) {
+    const du = Math.max(dims[f][0], 0.01) / tile, dv = Math.max(dims[f][1], 0.01) / tile;
+    for (let v = 0; v < 4; v++) {
+      const i = f * 4 + v;
+      uv.setXY(i, uv.getX(i) * du, uv.getY(i) * dv);
+    }
+  }
+  return g;
+}
+
 function mergeBoxes(specs) {
   if (specs.length === 0) return null;
   const geos = specs.map((s) => {
     const g = new THREE.BoxGeometry(s.sx, s.sy, s.sz);
+    scaleBoxUVs(g, s.sx, s.sy, s.sz, s.tile || UV_TILE);
     g.translate(s.cx, s.cy, s.cz);
+    return g;
+  });
+  const merged = mergeGeometries(geos, false);
+  geos.forEach((g) => g.dispose());
+  return merged;
+}
+
+/** Merge boxes that each carry a `color` — bakes per-box vertex colors. */
+function mergeBoxesColored(specs) {
+  if (specs.length === 0) return null;
+  const geos = specs.map((s) => {
+    const g = new THREE.BoxGeometry(s.sx, s.sy, s.sz);
+    scaleBoxUVs(g, s.sx, s.sy, s.sz, s.tile || UV_TILE);
+    g.translate(s.cx, s.cy, s.cz);
+    const col = new THREE.Color(s.color);
+    const n = g.attributes.position.count;
+    const arr = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { arr[i * 3] = col.r; arr[i * 3 + 1] = col.g; arr[i * 3 + 2] = col.b; }
+    g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
     return g;
   });
   const merged = mergeGeometries(geos, false);
@@ -36,6 +73,16 @@ function groundTexture() {
     ctx.fillStyle = grad;
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
   }
+  // macro mottling so tiling isn't visible at distance
+  for (let i = 0; i < 26; i++) {
+    const x = Math.random() * 1024, y = Math.random() * 1024, r = 130 + Math.random() * 220;
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+    const tint = Math.random() < 0.5 ? '52,66,34' : '74,64,42';
+    grad.addColorStop(0, `rgba(${tint},0.22)`);
+    grad.addColorStop(1, `rgba(${tint},0)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
   // fine grass noise
   for (let i = 0; i < 26000; i++) {
     const x = Math.random() * 1024, y = Math.random() * 1024;
@@ -53,25 +100,21 @@ function groundTexture() {
   return tex;
 }
 
-function skyTexture() {
+function skyTexture(mood) {
   const c = document.createElement('canvas');
   c.width = 1024; c.height = 512;
   const ctx = c.getContext('2d');
   const g = ctx.createLinearGradient(0, 0, 0, 512);
-  g.addColorStop(0.0, '#2f6fb0');
-  g.addColorStop(0.42, '#6fa5cc');
-  g.addColorStop(0.62, '#a9c6da');
-  g.addColorStop(0.78, '#d3d3c4');
-  g.addColorStop(1.0, '#c6bba0');
+  for (const [stop, col] of mood.sky) g.addColorStop(stop, col);
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, 1024, 512);
   // soft clouds in the upper band
-  for (let i = 0; i < 90; i++) {
+  for (let i = 0; i < 110; i++) {
     const x = Math.random() * 1024, y = Math.random() * 300;
     const r = 24 + Math.random() * 90;
     const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
-    const a = 0.05 + Math.random() * 0.14;
-    grad.addColorStop(0, `rgba(255,255,255,${a})`);
+    const a = (0.05 + Math.random() * 0.14) * mood.cloud;
+    grad.addColorStop(0, `rgba(255,244,230,${a})`);
     grad.addColorStop(1, 'rgba(255,255,255,0)');
     ctx.fillStyle = grad;
     ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
@@ -80,6 +123,122 @@ function skyTexture() {
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
 }
+
+/** Small canvas texture helper. */
+function canvasTex(size, draw, srgb = true) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  draw(c.getContext('2d'), size);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+function speckle(ctx, size, n, colors, aMax, sMax = 3) {
+  for (let i = 0; i < n; i++) {
+    ctx.fillStyle = colors[(Math.random() * colors.length) | 0].replace('A', (Math.random() * aMax).toFixed(2));
+    const s = 1 + Math.random() * sMax;
+    ctx.fillRect(Math.random() * size, Math.random() * size, s, s);
+  }
+}
+
+/** Weathered plaster/concrete for building walls. */
+function plasterTexture() {
+  return canvasTex(256, (ctx, S) => {
+    ctx.fillStyle = '#cdc5b4'; ctx.fillRect(0, 0, S, S);
+    speckle(ctx, S, 2600, ['rgba(90,80,60,A)', 'rgba(255,250,235,A)', 'rgba(120,100,75,A)'], 0.16);
+    // faint horizontal formwork lines
+    ctx.fillStyle = 'rgba(80,70,55,0.10)';
+    for (let y = 32; y < S; y += 64) ctx.fillRect(0, y, S, 2);
+    // grime streaks near the bottom
+    for (let i = 0; i < 14; i++) {
+      const x = Math.random() * S;
+      const grad = ctx.createLinearGradient(x, S * 0.5, x, S);
+      grad.addColorStop(0, 'rgba(70,60,45,0)');
+      grad.addColorStop(1, 'rgba(70,60,45,0.10)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(x, S * 0.5, 2 + Math.random() * 8, S * 0.5);
+    }
+  });
+}
+
+/** Vertical container ribs on a near-white base (tinted per box via vertex colors). */
+function ribTexture() {
+  return canvasTex(256, (ctx, S) => {
+    ctx.fillStyle = '#f2f2f2'; ctx.fillRect(0, 0, S, S);
+    for (let x = 0; x < S; x += 32) {
+      const grad = ctx.createLinearGradient(x, 0, x + 32, 0);
+      grad.addColorStop(0, 'rgba(0,0,0,0.34)');
+      grad.addColorStop(0.35, 'rgba(255,255,255,0.10)');
+      grad.addColorStop(0.65, 'rgba(0,0,0,0)');
+      grad.addColorStop(1, 'rgba(0,0,0,0.30)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(x, 0, 32, S);
+    }
+    speckle(ctx, S, 900, ['rgba(60,50,40,A)', 'rgba(255,255,255,A)'], 0.10);
+    // rust patches
+    for (let i = 0; i < 12; i++) {
+      ctx.fillStyle = `rgba(120,60,30,${0.05 + Math.random() * 0.10})`;
+      ctx.beginPath(); ctx.arc(Math.random() * S, S * 0.6 + Math.random() * S * 0.4, 4 + Math.random() * 12, 0, 7); ctx.fill();
+    }
+  });
+}
+
+/** Roof tiles with faint seams. */
+function roofTexture() {
+  return canvasTex(256, (ctx, S) => {
+    ctx.fillStyle = '#8a4a3a'; ctx.fillRect(0, 0, S, S);
+    ctx.strokeStyle = 'rgba(40,18,12,0.35)'; ctx.lineWidth = 2;
+    for (let y = 0; y <= S; y += 32) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(S, y); ctx.stroke(); }
+    for (let x = 0; x <= S; x += 32) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, S); ctx.stroke(); }
+    speckle(ctx, S, 1400, ['rgba(30,14,10,A)', 'rgba(255,200,160,A)'], 0.14);
+  });
+}
+
+/** Brushed dark metal for crates / mezzanines / car bodies (tinted via color). */
+function brushedMetalTexture() {
+  return canvasTex(256, (ctx, S) => {
+    ctx.fillStyle = '#d8d8d8'; ctx.fillRect(0, 0, S, S);
+    for (let i = 0; i < 380; i++) {
+      ctx.fillStyle = `rgba(40,40,40,${Math.random() * 0.08})`;
+      ctx.fillRect(0, Math.random() * S, S, 1);
+    }
+    speckle(ctx, S, 700, ['rgba(30,30,30,A)'], 0.12);
+  }, false);
+}
+
+/** Burlap weave for sandbags. */
+function fabricTexture() {
+  return canvasTex(128, (ctx, S) => {
+    ctx.fillStyle = '#9a8a66'; ctx.fillRect(0, 0, S, S);
+    ctx.strokeStyle = 'rgba(60,48,30,0.25)'; ctx.lineWidth = 1;
+    for (let i = 0; i < S; i += 4) {
+      ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(S, i); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, S); ctx.stroke();
+    }
+    speckle(ctx, S, 500, ['rgba(50,40,25,A)'], 0.15);
+  });
+}
+
+/** Per-match lighting moods. */
+export const MOODS = {
+  day: {
+    sky: [[0.0, '#2f6fb0'], [0.42, '#6fa5cc'], [0.62, '#a9c6da'], [0.78, '#d3d3c4'], [1.0, '#c6bba0']],
+    cloud: 1.0, sunColor: 0xffe6bd, sunInt: 2.0, sunDir: [0.5, 0.72, 0.36],
+    hemiSky: 0x9ec6ff, hemiGround: 0x4b5438, hemiInt: 0.42,
+    fogColor: 0xaab8c4, fogDen: 0.0011, exposure: 0.95, water: 0x245a72,
+    groundTint: 0xffffff, sunSprite: 'rgba(255,246,214,0.95)',
+  },
+  dusk: {
+    sky: [[0.0, '#1f2a52'], [0.40, '#4a3f6e'], [0.60, '#a05a52'], [0.78, '#e08a52'], [1.0, '#f0b060']],
+    cloud: 1.6, sunColor: 0xffab66, sunInt: 1.75, sunDir: [0.78, 0.26, 0.22],
+    hemiSky: 0x8a7fd0, hemiGround: 0x3a3227, hemiInt: 0.38,
+    fogColor: 0xc08a68, fogDen: 0.00135, exposure: 1.0, water: 0x3d4c66,
+    groundTint: 0xd8bc9c, sunSprite: 'rgba(255,166,100,0.95)',
+  },
+};
 
 function radialTex(color, hard = false) {
   const c = document.createElement('canvas');
@@ -105,34 +264,37 @@ export class World {
   }
 
   build(scene, opts = {}) {
-    const { shadows = true } = opts;
+    const { shadows = true, mood = 'day' } = opts;
+    this.moodCfg = MOODS[mood] || MOODS.day;
+    this.moodName = MOODS[mood] ? mood : 'day';
+    const M = this.moodCfg;
     scene.add(this.group);
 
     // ---- Sky dome (procedural gradient + clouds) ----
     const skyGeo = new THREE.SphereGeometry(1400, 48, 24);
-    const skyMat = new THREE.MeshBasicMaterial({ map: skyTexture(), side: THREE.BackSide, depthWrite: false, fog: false });
+    const skyMat = new THREE.MeshBasicMaterial({ map: skyTexture(M), side: THREE.BackSide, depthWrite: false, fog: false });
     const sky = new THREE.Mesh(skyGeo, skyMat);
     sky.renderOrder = -1000;
     scene.add(sky);
     this.sky = sky;
 
     // ---- Sun disc + glow sprite ----
-    const sunDir = new THREE.Vector3(0.5, 0.72, 0.36).normalize();
+    const sunDir = new THREE.Vector3(...M.sunDir).normalize();
     const sunSprite = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: radialTex('rgba(255,246,214,0.95)'), transparent: true, depthWrite: false, fog: false,
+      map: radialTex(M.sunSprite), transparent: true, depthWrite: false, fog: false,
       blending: THREE.AdditiveBlending, opacity: 0.9,
     }));
     sunSprite.scale.setScalar(320);
     sunSprite.position.copy(sunDir).multiplyScalar(1150);
     scene.add(sunSprite);
 
-    scene.fog = new THREE.FogExp2(0xaab8c4, 0.0011);
-    scene.background = new THREE.Color(0x8ba6bd);
+    scene.fog = new THREE.FogExp2(M.fogColor, M.fogDen);
+    scene.background = new THREE.Color(M.fogColor);
 
     // ---- Lights ----
-    const hemi = new THREE.HemisphereLight(0x9ec6ff, 0x4b5438, 0.55);
+    const hemi = new THREE.HemisphereLight(M.hemiSky, M.hemiGround, M.hemiInt);
     scene.add(hemi);
-    const sun = new THREE.DirectionalLight(0xffe6bd, 2.1);
+    const sun = new THREE.DirectionalLight(M.sunColor, M.sunInt);
     sun.position.copy(sunDir).multiplyScalar(300);
     sun.castShadow = shadows;
     if (shadows) {
@@ -149,7 +311,8 @@ export class World {
     this.sun = sun;
 
     // ---- Ground ----
-    const groundMat = new THREE.MeshStandardMaterial({ map: groundTexture(), roughness: 1, metalness: 0 });
+    const groundMat = new THREE.MeshStandardMaterial({ map: groundTexture(), roughness: 1, metalness: 0, color: M.groundTint });
+    groundMat.userData.envI = 0.25;
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(WORLD_HALF * 2 + 1600, WORLD_HALF * 2 + 1600, 1, 1), groundMat);
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = shadows;
@@ -206,10 +369,12 @@ export class World {
   }
 
   _buildWater(scene, shadows) {
+    const M = this.moodCfg || MOODS.day;
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x245a72, roughness: 0.12, metalness: 0.5, transparent: true, opacity: 0.9,
+      color: M.water, roughness: 0.12, metalness: 0.5, transparent: true, opacity: 0.9,
       envMapIntensity: 1.4,
     });
+    mat.userData.envI = 1.2;
     this.waters = [];
     const lakes = [
       { x: -560, z: 430, rx: 210, rz: 150 },
@@ -233,6 +398,7 @@ export class World {
     const roofSpecs = [];
     const metalSpecs = [];
     const windowSpecs = [];
+    const floorSpecs = [];
     const occupied = [];
     const spots = [];
 
@@ -262,7 +428,7 @@ export class World {
         if (!ok) continue;
         const w = rand(7, 15), d = rand(7, 15), h = rand(3.2, 5.2), t = 0.55;
         occupied.push({ x, z, r: Math.max(w, d) / 2 });
-        this._makeBuilding(x, z, w, d, h, t, wallSpecs, roofSpecs, metalSpecs, spots);
+        this._makeBuilding(x, z, w, d, h, t, wallSpecs, roofSpecs, metalSpecs, floorSpecs, spots);
         this._windows(windowSpecs, x, z, w, d, h, t);
       }
     }
@@ -271,7 +437,7 @@ export class World {
     for (let i = 0; i < 4; i++) {
       const cc = choice(clusterCenters);
       const x = cc.x + rand(-30, 30), z = cc.z + rand(-30, 30);
-      this._makeTower(x, z, wallSpecs, roofSpecs, metalSpecs, spots);
+      this._makeTower(x, z, wallSpecs, roofSpecs, metalSpecs, floorSpecs, spots);
     }
 
     // large two-level warehouses (enterable, with mezzanine ramp)
@@ -279,35 +445,47 @@ export class World {
       const cc = choice(clusterCenters);
       const x = cc.x + rand(-40, 40), z = cc.z + rand(-40, 40);
       if (clusterCenters.every((other) => dist2D(other.x, other.z, x, z) > 6)) {
-        this._makeWarehouse(x, z, wallSpecs, roofSpecs, metalSpecs, spots);
+        this._makeWarehouse(x, z, wallSpecs, roofSpecs, metalSpecs, floorSpecs, spots);
         this._windows(windowSpecs, x, z, 16, 22, 6.2, 0.6);
       }
     }
 
     const wallGeo = mergeBoxes(wallSpecs);
     if (wallGeo) {
-      const mat = new THREE.MeshStandardMaterial({ color: 0xcac3b2, roughness: 0.9, metalness: 0.02 });
+      const mat = new THREE.MeshStandardMaterial({ map: plasterTexture(), roughness: 0.9, metalness: 0.02 });
+      mat.userData.envI = 0.35;
       const mesh = new THREE.Mesh(wallGeo, mat);
       mesh.castShadow = shadows; mesh.receiveShadow = shadows;
       scene.add(mesh); this.solids.push(mesh);
     }
     const roofGeo = mergeBoxes(roofSpecs);
     if (roofGeo) {
-      const mat = new THREE.MeshStandardMaterial({ color: 0x8a4a3a, roughness: 0.85 });
+      const mat = new THREE.MeshStandardMaterial({ map: roofTexture(), color: 0xd8b0a0, roughness: 0.85 });
+      mat.userData.envI = 0.35;
       const mesh = new THREE.Mesh(roofGeo, mat);
       mesh.castShadow = shadows; mesh.receiveShadow = shadows;
       scene.add(mesh); this.solids.push(mesh);
     }
     const metalGeo = mergeBoxes(metalSpecs);
     if (metalGeo) {
-      const mat = new THREE.MeshStandardMaterial({ color: 0x5a6472, roughness: 0.5, metalness: 0.6 });
+      const mat = new THREE.MeshStandardMaterial({ map: brushedMetalTexture(), color: 0x8a929c, roughness: 0.5, metalness: 0.6 });
+      mat.userData.envI = 0.7;
       const mesh = new THREE.Mesh(metalGeo, mat);
       mesh.castShadow = shadows; mesh.receiveShadow = shadows;
+      scene.add(mesh); this.solids.push(mesh);
+    }
+    const floorGeo = mergeBoxes(floorSpecs);
+    if (floorGeo) {
+      const mat = new THREE.MeshStandardMaterial({ map: plasterTexture(), color: 0x8f887c, roughness: 0.95 });
+      mat.userData.envI = 0.25;
+      const mesh = new THREE.Mesh(floorGeo, mat);
+      mesh.receiveShadow = shadows;
       scene.add(mesh); this.solids.push(mesh);
     }
     const winGeo = mergeBoxes(windowSpecs);
     if (winGeo) {
       const mat = new THREE.MeshStandardMaterial({ color: 0x1d2a33, roughness: 0.12, metalness: 0.55 });
+      mat.userData.envI = 1.0;
       const mesh = new THREE.Mesh(winGeo, mat);
       mesh.castShadow = false; mesh.receiveShadow = false;
       scene.add(mesh); this.solids.push(mesh);
@@ -335,10 +513,14 @@ export class World {
     }
   }
 
-  _makeBuilding(x, z, w, d, h, t, wallSpecs, roofSpecs, metalSpecs, spots) {
+  _makeBuilding(x, z, w, d, h, t, wallSpecs, roofSpecs, metalSpecs, floorSpecs, spots) {
     const hw = w / 2, hd = d / 2;
     const doorW = 2.2;
     const wallY = h / 2;
+
+    // concrete floor slab (top at y = 0.1; low enough to auto-step onto)
+    floorSpecs.push({ cx: x, cy: 0.05, cz: z, sx: w, sy: 0.1, sz: d });
+    this._addBoxCollider(x, 0.05, z, w, 0.1, d);
 
     const pushWall = (cx, cz, sx, sz) => {
       wallSpecs.push({ cx, cy: wallY, cz, sx, sy: h, sz });
@@ -383,7 +565,7 @@ export class World {
     // loot inside + by the door
     const lootCount = randInt(1, 3);
     for (let i = 0; i < lootCount; i++) {
-      spots.push({ x: x + rand(-hw + 1, hw - 1), z: z + rand(-hd + 1, hd - 1), y: 0 });
+      spots.push({ x: x + rand(-hw + 1, hw - 1), z: z + rand(-hd + 1, hd - 1), y: 0.1 });
     }
     if (Math.random() < 0.5) spots.push({ x: x + rand(-hw, hw), z: z + hd + rand(1.5, 4), y: 0 });
 
@@ -401,8 +583,10 @@ export class World {
     }
   }
 
-  _makeTower(x, z, wallSpecs, roofSpecs, metalSpecs, spots) {
+  _makeTower(x, z, wallSpecs, roofSpecs, metalSpecs, floorSpecs, spots) {
     const w = 8, d = 8, h = 9, t = 0.6;
+    floorSpecs.push({ cx: x, cy: 0.05, cz: z, sx: w, sy: 0.1, sz: d });
+    this._addBoxCollider(x, 0.05, z, w, 0.1, d);
     const hw = w / 2, hd = d / 2;
     const doorW = 2.4;
     wallSpecs.push({ cx: x, cy: h / 2, cz: z - hd, sx: w, sy: h, sz: t });
@@ -430,12 +614,14 @@ export class World {
       step++;
     }
     spots.push({ x, z, y: h + 0.4 });
-    spots.push({ x: x + rand(-3, 3), z: z + rand(-3, 3), y: 0 });
+    spots.push({ x: x + rand(-3, 3), z: z + rand(-3, 3), y: 0.1 });
   }
 
   /** Large two-level warehouse: open interior, mezzanine reachable by a stepped ramp. */
-  _makeWarehouse(x, z, wallSpecs, roofSpecs, metalSpecs, spots) {
+  _makeWarehouse(x, z, wallSpecs, roofSpecs, metalSpecs, floorSpecs, spots) {
     const w = 16, d = 22, h = 6.2, t = 0.6, hw = w / 2, hd = d / 2;
+    floorSpecs.push({ cx: x, cy: 0.05, cz: z, sx: w, sy: 0.1, sz: d });
+    this._addBoxCollider(x, 0.05, z, w, 0.1, d);
     const doorW = 3.4;
     const push = (cx, cy, cz, sx, sy, sz) => { wallSpecs.push({ cx, cy, cz, sx, sy, sz }); this._addBoxCollider(cx, cy, cz, sx, sy, sz); };
 
@@ -486,7 +672,7 @@ export class World {
     }
 
     // loot: ground floor, mezzanine, roof
-    for (let i = 0; i < 4; i++) spots.push({ x: x + rand(-hw + 2, hw - 2), z: z + rand(-hd + 2, hd - 2), y: 0 });
+    for (let i = 0; i < 4; i++) spots.push({ x: x + rand(-hw + 2, hw - 2), z: z + rand(-hd + 2, hd - 2), y: 0.1 });
     spots.push({ x: x + rand(-hw + 2, hw - 2), z: z - hd / 2, y: mezzY + 0.2 });
     spots.push({ x, z, y: h + 0.4 });
   }
@@ -566,30 +752,52 @@ export class World {
     this._buildCoverProps(scene, shadows);
   }
 
+  _makeCar(x, z, alongX, color, containerSpecs, glassSpecs, darkSpecs) {
+    // simple but readable wreck: body + glasshouse + dark wheels/trim
+    const L = 4.4, W = 2.0, bodyH = 0.8, cabH = 0.65;
+    const w = alongX ? L : W, d = alongX ? W : L;
+    const baseY = 0.35;
+    containerSpecs.push({ cx: x, cy: baseY + bodyH / 2, cz: z, sx: w, sy: bodyH, sz: d, color });
+    // hood/trunk taper
+    containerSpecs.push({ cx: x, cy: baseY + bodyH + 0.12, cz: z, sx: alongX ? w * 0.94 : w, sy: 0.24, sz: alongX ? d : d * 0.94, color });
+    // glasshouse
+    const cabL = (alongX ? L : W) * 0.48, cabW = (alongX ? W : L) * 0.84;
+    const cabY = baseY + bodyH + 0.24 + cabH / 2;
+    glassSpecs.push({ cx: x, cy: cabY, cz: z, sx: alongX ? cabL : cabW, sy: cabH, sz: alongX ? cabW : cabL });
+    // pillars + roof sliver in body color
+    containerSpecs.push({ cx: x, cy: cabY + cabH / 2 + 0.03, cz: z, sx: alongX ? cabL * 0.9 : cabW * 0.9, sy: 0.08, sz: alongX ? cabW * 0.9 : cabL * 0.9, color });
+    // wheels + bumpers
+    const ww = alongX ? 0.7 : 0.42, wd = alongX ? 0.42 : 0.7;
+    for (const a of [-1, 1]) for (const b of [-1, 1]) {
+      darkSpecs.push({
+        cx: x + (alongX ? a * L * 0.32 : b * (W / 2 - 0.05)),
+        cy: 0.35, cz: z + (alongX ? b * (W / 2 - 0.05) : a * L * 0.32),
+        sx: ww, sy: 0.7, sz: wd,
+      });
+    }
+    this._addBoxCollider(x, 0.85, z, w, 1.7, d);
+  }
+
   _buildCoverProps(scene, shadows) {
     const containerColors = [0xb5502f, 0x2f6f8f, 0x8f7a2f, 0x3f7a46, 0x7a3f6f];
-    const geos = [];
+    const carColors = [0x7a8894, 0x8f3b2e, 0x2e4a6b, 0x6b6f66, 0xb0a890];
+    const containerSpecs = [];
+    const carGlassSpecs = [];
+    const darkSpecs = [];
+    const sandbagSpecs = [];
     const dummy = new THREE.Object3D();
-    const palette = [];
-    const place = (x, z, w, h, d, color, climb = true) => {
-      const g = new THREE.BoxGeometry(w, h, d);
-      g.translate(x, h / 2, z);
-      const idx = palette.length;
-      palette.push(color);
-      geos.push({ g, idx });
-      this._addBoxCollider(x, h / 2, z, w, h, d);
-    };
     const clear = (x, z, r) =>
       !this.boxes.some((b) => x > b.min.x - r && x < b.max.x + r && z > b.min.z - r && z < b.max.z + r) &&
       !this.circles.some((c) => dist2D(c.x, c.z, x, z) < c.r + r);
 
-    // Shipping containers (climbable, 6m tall so roof is reachable via crates)
+    // Shipping containers (ribbed, per-box colors, roofs reachable via crates)
     let n = 0, t = 0;
     while (n < 18 && t < 400) {
       t++;
       const x = rand(-WORLD_HALF + 30, WORLD_HALF - 30), z = rand(-WORLD_HALF + 30, WORLD_HALF - 30);
       if (!clear(x, z, 8)) continue;
-      place(x, z, 12, 2.6, 2.6, containerColors[(Math.random() * containerColors.length) | 0]);
+      containerSpecs.push({ cx: x, cy: 1.3, cz: z, sx: 12, sy: 2.6, sz: 2.6, color: choice(containerColors) });
+      this._addBoxCollider(x, 1.3, z, 12, 2.6, 2.6);
       n++;
     }
     // Wrecked cars (cover)
@@ -598,7 +806,7 @@ export class World {
       t++;
       const x = rand(-WORLD_HALF + 20, WORLD_HALF - 20), z = rand(-WORLD_HALF + 20, WORLD_HALF - 20);
       if (!clear(x, z, 7)) continue;
-      place(x, z, 4.4, 1.5, 2.0, 0x53585c);
+      this._makeCar(x, z, Math.random() < 0.5, choice(carColors), containerSpecs, carGlassSpecs, darkSpecs);
       n++;
     }
     // Sandbag lines (low cover)
@@ -608,25 +816,50 @@ export class World {
       const x = rand(-WORLD_HALF + 20, WORLD_HALF - 20), z = rand(-WORLD_HALF + 20, WORLD_HALF - 20);
       if (!clear(x, z, 6)) continue;
       const long = Math.random() < 0.5;
-      place(x, z, long ? 6 : 1.2, 1.1, long ? 1.2 : 6, 0x8a7a55);
+      sandbagSpecs.push({ cx: x, cy: 0.55, cz: z, sx: long ? 6 : 1.2, sy: 1.1, sz: long ? 1.2 : 6 });
+      this._addBoxCollider(x, 0.55, z, long ? 6 : 1.2, 1.1, long ? 1.2 : 6);
       n++;
     }
 
-    const byColor = new Map();
-    for (const { g, idx } of geos) {
-      const key = palette[idx];
-      if (!byColor.has(key)) byColor.set(key, []);
-      byColor.get(key).push(g);
-    }
-    for (const [color, list] of byColor) {
-      const mesh = new THREE.Mesh(
-        mergeGeometries(list, false),
-        new THREE.MeshStandardMaterial({ color, roughness: 0.75, metalness: color === 0x53585c ? 0.5 : 0.15 })
-      );
+    // merged containers + car bodies: ribs tinted per instance
+    const contGeo = mergeBoxesColored(containerSpecs);
+    if (contGeo) {
+      const mat = new THREE.MeshStandardMaterial({ map: ribTexture(), vertexColors: true, roughness: 0.6, metalness: 0.35 });
+      mat.userData.envI = 0.6;
+      const mesh = new THREE.Mesh(contGeo, mat);
       mesh.castShadow = shadows; mesh.receiveShadow = shadows;
       scene.add(mesh);
       this.solids.push(mesh);
-      list.forEach((g) => g.dispose());
+    }
+    // car glass
+    const glassGeo = mergeBoxes(carGlassSpecs);
+    if (glassGeo) {
+      const mat = new THREE.MeshStandardMaterial({ color: 0x141c22, roughness: 0.08, metalness: 0.7 });
+      mat.userData.envI = 1.1;
+      const mesh = new THREE.Mesh(glassGeo, mat);
+      mesh.castShadow = false; mesh.receiveShadow = false;
+      scene.add(mesh);
+      this.solids.push(mesh);
+    }
+    // dark trim / wheels
+    const darkGeo = mergeBoxes(darkSpecs);
+    if (darkGeo) {
+      const mat = new THREE.MeshStandardMaterial({ color: 0x1a1c1e, roughness: 0.85, metalness: 0.1 });
+      mat.userData.envI = 0.3;
+      const mesh = new THREE.Mesh(darkGeo, mat);
+      mesh.castShadow = shadows; mesh.receiveShadow = shadows;
+      scene.add(mesh);
+      this.solids.push(mesh);
+    }
+    // sandbags: burlap weave
+    const sandGeo = mergeBoxes(sandbagSpecs);
+    if (sandGeo) {
+      const mat = new THREE.MeshStandardMaterial({ map: fabricTexture(), color: 0xb59a70, roughness: 1 });
+      mat.userData.envI = 0.25;
+      const mesh = new THREE.Mesh(sandGeo, mat);
+      mesh.castShadow = shadows; mesh.receiveShadow = shadows;
+      scene.add(mesh);
+      this.solids.push(mesh);
     }
 
     // Barrels (cylinders, low cover)

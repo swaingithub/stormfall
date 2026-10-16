@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { rand, randInt, choice, chance, dist2D } from './utils.js';
-import { WEAPONS, AMMO_MAX } from './weapons.js';
+import { WEAPONS, AMMO_MAX, WEAPON_TIER, TIER_GLOW } from './weapons.js';
 
 const COLORS = {
   weapon: 0xff9800,
@@ -48,6 +48,8 @@ export class Loot {
     const g = new THREE.Group();
     const color = COLORS[this.type];
     const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.5, roughness: 0.4, metalness: 0.3 });
+    mat.userData.envI = 0.2;
+    mat.envMapIntensity = 0.2;
     let core;
     if (this.type === 'weapon') core = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.14, 0.16), mat);
     else if (this.type === 'ammo') core = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.22, 0.22), mat);
@@ -55,7 +57,8 @@ export class Loot {
     else if (this.type === 'grenade') core = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.22, 10), mat);
     else if (this.type === 'attachment') core = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.12, 0.12), mat);
     else core = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.26), mat);
-    core.position.y = 0.55;
+    core.position.y = 0.32;
+    core.rotation.y = Math.random() * Math.PI;
     g.add(core);
 
     const ring = new THREE.Mesh(
@@ -63,21 +66,29 @@ export class Loot {
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false })
     );
     ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.03;
+    ring.position.y = 0.12;
     g.add(ring);
 
-    // label
+    // label (weapons use their rarity-tier color)
     let text = '';
-    if (this.type === 'weapon') text = WEAPONS[this.data.id].name;
+    let labelColor = '#' + new THREE.Color(color).getHexString();
+    if (this.type === 'weapon') {
+      text = WEAPONS[this.data.id].name;
+      const tier = WEAPON_TIER[this.data.id] || 1;
+      labelColor = '#' + new THREE.Color(TIER_GLOW[tier]).getHexString();
+      this.glowColor = TIER_GLOW[tier];
+    }
     else if (this.type === 'ammo') text = `${this.data.amount} Ammo`;
     else if (this.type === 'armor') text = `Armor ${this.data.value}`;
     else if (this.type === 'grenade') text = `Frag x${this.data.amount}`;
     else if (this.type === 'attachment') text = this.data.kind === 'extmag' ? 'Extended Mag' : 'Compensator';
     else text = `Medkit +${this.data.heal}`;
-    const sprMat = new THREE.SpriteMaterial({ map: makeLabelTexture(text, '#' + new THREE.Color(color).getHexString()), transparent: true, depthTest: true, depthWrite: false });
+    const sprMat = new THREE.SpriteMaterial({ map: makeLabelTexture(text, labelColor), transparent: true, depthTest: true, depthWrite: false });
     const spr = new THREE.Sprite(sprMat);
     spr.scale.set(1.6, 0.4, 1);
-    spr.position.y = 1.1;
+    // stagger label heights so clustered loot stays readable
+    const li = Math.abs(Math.sin(this.position.x * 12.9898 + this.position.z * 78.233) * 43758.55) % 1;
+    spr.position.y = 0.95 + li * 0.4;
     g.add(spr);
     this.spr = spr;
 
@@ -92,14 +103,14 @@ export class Loot {
     if (!this.mesh) return;
     this.bob += dt * 2;
     this.core.rotation.y += dt * 1.5;
-    this.mesh.position.y = this.position.y + Math.sin(this.bob) * 0.08;
+    this.mesh.position.y = this.position.y + Math.sin(this.bob) * 0.05;
     if (this.spr && camera) {
       const d = camera.position.distanceTo(this.mesh.position);
-      const vis = d < 42;
+      const vis = d < 34;
       this.spr.visible = vis;
       if (vis) {
-        this.spr.material.opacity = Math.min(1, Math.max(0, (42 - d) / 10));
-        const sc = 0.85 + Math.min(d, 42) * 0.02;
+        this.spr.material.opacity = Math.min(1, Math.max(0, (34 - d) / 10));
+        const sc = 0.85 + Math.min(d, 34) * 0.02;
         this.spr.scale.set(1.6 * sc, 0.4 * sc, 1);
       }
     }
@@ -112,6 +123,66 @@ export class LootManager {
     this.items = [];
     this.group = new THREE.Group();
     scene.add(this.group);
+    // COD-style rarity light pillars for weapons: one instanced draw call
+    this.beamGeo = new THREE.CylinderGeometry(0.10, 0.16, 7, 8, 1, true);
+    this.beamGeo.translate(0, 3.5, 0);
+    const bc = document.createElement('canvas');
+    bc.width = 16; bc.height = 128;
+    const bctx = bc.getContext('2d');
+    const bgrad = bctx.createLinearGradient(0, 128, 0, 0);
+    bgrad.addColorStop(0, 'rgba(255,255,255,0.85)');
+    bgrad.addColorStop(0.5, 'rgba(255,255,255,0.28)');
+    bgrad.addColorStop(1, 'rgba(255,255,255,0)');
+    bctx.fillStyle = bgrad;
+    bctx.fillRect(0, 0, 16, 128);
+    const beamTex = new THREE.CanvasTexture(bc);
+    this.beamMat = new THREE.MeshBasicMaterial({
+      map: beamTex, transparent: true, opacity: 0.38,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    this.beamCap = 512;
+    this.beams = new THREE.InstancedMesh(this.beamGeo, this.beamMat, this.beamCap);
+    this.beams.count = 0;
+    this.beams.frustumCulled = false;
+    this.beamCount = 0;
+    this.group.add(this.beams);
+    this._m4 = new THREE.Matrix4();
+    this._zeroM4 = new THREE.Matrix4().makeScale(0, 0, 0);
+  }
+
+  _beamSlot(x, y, z, colorHex) {
+    if (this.beamCount >= this.beamCap) {
+      // grow capacity (rare; doubles the buffer)
+      const old = this.beams;
+      this.beamCap *= 2;
+      this.beams = new THREE.InstancedMesh(this.beamGeo, this.beamMat, this.beamCap);
+      this.beams.frustumCulled = false;
+      this.beams.count = old.count;
+      for (let i = 0; i < old.count; i++) {
+        old.getMatrixAt(i, this._m4);
+        this.beams.setMatrixAt(i, this._m4);
+      }
+      this.beams.instanceMatrix.needsUpdate = true;
+      if (old.instanceColor) {
+        const c = new THREE.Color();
+        for (let i = 0; i < old.count; i++) {
+          old.getColorAt(i, c);
+          this.beams.setColorAt(i, c);
+        }
+        if (this.beams.instanceColor) this.beams.instanceColor.needsUpdate = true;
+      }
+      this.group.remove(old);
+      old.dispose();
+      this.group.add(this.beams);
+    }
+    const idx = this.beamCount++;
+    this._m4.makeTranslation(x, y, z);
+    this.beams.setMatrixAt(idx, this._m4);
+    this.beams.setColorAt(idx, new THREE.Color(colorHex));
+    this.beams.count = this.beamCount;
+    this.beams.instanceMatrix.needsUpdate = true;
+    if (this.beams.instanceColor) this.beams.instanceColor.needsUpdate = true;
+    return idx;
   }
 
   spawnFromWorld(world) {
@@ -149,6 +220,9 @@ export class LootManager {
     const mesh = item.build();
     this.group.add(mesh);
     this.items.push(item);
+    if (type === 'weapon' && item.glowColor !== undefined) {
+      item.beamIdx = this._beamSlot(x, y, z, item.glowColor);
+    }
     return item;
   }
 
@@ -171,6 +245,11 @@ export class LootManager {
     item.taken = true;
     this.group.remove(item.mesh);
     item.mesh.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+    if (item.beamIdx !== undefined && item.beamIdx !== null) {
+      this.beams.setMatrixAt(item.beamIdx, this._zeroM4);
+      this.beams.instanceMatrix.needsUpdate = true;
+      item.beamIdx = null;
+    }
     const i = this.items.indexOf(item);
     if (i >= 0) this.items.splice(i, 1);
   }

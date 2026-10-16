@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { World, WORLD_HALF, EYE_HEIGHT } from './world.js';
 import { Player } from './player.js';
 import { Bot } from './bots.js';
@@ -83,7 +84,7 @@ export class Game {
   /** Returns a character rig: real skinned soldier when available, else procedural. */
   makeRig(id, def) {
     if (this.skins) {
-      try { return new SkinnedCharacter(this.skins, def); }
+      try { return new SkinnedCharacter(this.skins, def, id); }
       catch (err) { console.warn('[skins] rig failed, falling back:', err && err.message); }
     }
     return new CharacterRig(id, def);
@@ -120,7 +121,17 @@ export class Game {
     this.over = false;
     this.elapsed = 0;
 
-    this.world = new World().build(this.scene, { shadows: this.opts.shadows });
+    this.world = new World().build(this.scene, {
+      shadows: this.opts.shadows,
+      mood: (() => {
+        // ?mood=day|dusk forces a lighting mood (handy for screenshots)
+        try {
+          const m = new URLSearchParams(location.search).get('mood');
+          if (m === 'day' || m === 'dusk') return m;
+        } catch (err) { /* ignore */ }
+        return Math.random() < 0.45 ? 'dusk' : 'day';
+      })(),
+    });
     this.effects = new Effects(this.scene);
     this.throwables = new ThrowableManager(this.scene);
     this.loot = new LootManager(this.scene);
@@ -167,6 +178,24 @@ export class Game {
       this.botsAlive++;
     }
     this.totalPlayers = this.botsAlive + 1;
+
+    // image-based lighting: one shared PMREM environment for the whole match
+    if (!this._envTex) {
+      const pm = new THREE.PMREMGenerator(this.renderer);
+      this._envTex = pm.fromScene(new RoomEnvironment(this.renderer), 0.04).texture;
+      pm.dispose();
+    }
+    this.scene.environment = this._envTex;
+    this.scene.traverse((o) => {
+      if (!o.material) return;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) {
+        if (m && m.isMeshStandardMaterial) {
+          m.envMapIntensity = m.userData.envI !== undefined ? m.userData.envI : 0.35;
+        }
+      }
+    });
+    this.renderer.toneMappingExposure = this.world.moodCfg.exposure;
 
     this.deathTimers = [];
     this.hud.setAlive(this.totalPlayers);

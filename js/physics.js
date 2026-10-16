@@ -113,6 +113,7 @@ export class Physics {
       pants: new THREE.MeshStandardMaterial({ color: pal.pants, roughness: 0.85 }),
       helmet: new THREE.MeshStandardMaterial({ color: pal.helmet, roughness: 0.5, metalness: 0.15 }),
     };
+    for (const k in mats) { mats[k].userData.envI = 0.4; mats[k].envMapIntensity = 0.4; }
     const group = new THREE.Group();
     this.scene.add(group);
 
@@ -214,7 +215,7 @@ export class Physics {
         .setCollisionGroups((RAG_MEM << 16) | WORLD_MEM), rb);
       const mesh = new THREE.Mesh(
         new THREE.BoxGeometry(s * 2, s * 2, s * 2),
-        new THREE.MeshStandardMaterial({ color, roughness: 0.7, metalness: 0.2 })
+        new THREE.MeshStandardMaterial({ color, roughness: 0.7, metalness: 0.2, envMapIntensity: 0.4 })
       );
       mesh.castShadow = true;
       this.scene.add(mesh);

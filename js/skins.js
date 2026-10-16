@@ -72,15 +72,27 @@ export class Skins {
   }
 }
 
+/** Subtle uniform tints so bots don't all look identical (multiplied over the texture). */
+const TINTS = [0xffffff, 0xf0dfc0, 0xdde3cf, 0xd3dbe4, 0xcfc6b4, 0xe6d3b3, 0xc9cfc0];
+
 export class SkinnedCharacter {
-  constructor(skin, weaponDef = null) {
+  constructor(skin, weaponDef = null, tintIdx = 0) {
     this.root = new THREE.Group();
     this.model = SkeletonUtils.clone(skin.template);
+    const tint = new THREE.Color(TINTS[((tintIdx | 0) % TINTS.length + TINTS.length) % TINTS.length]);
     this.model.traverse((o) => {
       if (o.isMesh || o.isSkinnedMesh) {
         o.castShadow = true; o.receiveShadow = false; o.frustumCulled = false;
         // per-instance material so disposal/tinting is safe
         o.material = Array.isArray(o.material) ? o.material.map((m) => m.clone()) : o.material.clone();
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of mats) {
+          if (m && m.isMeshStandardMaterial) {
+            m.color.multiply(tint);
+            m.userData.envI = 0.45;
+            m.envMapIntensity = 0.45;
+          }
+        }
       }
     });
     // face +Z

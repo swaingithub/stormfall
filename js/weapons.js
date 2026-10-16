@@ -63,12 +63,15 @@ export const WEAPON_TIER = {
 export const AMMO_MAX = { light: 180, heavy: 180, shell: 60, sniper: 40 };
 export const AMMO_LABEL = { light: '9mm', heavy: '5.56', shell: '12g', sniper: '7.62' };
 
+/** Loot beam / label colors per weapon power tier (COD-style rarity). */
+export const TIER_GLOW = { 1: 0x9e9e9e, 2: 0x4aa3ff, 3: 0xb06cff, 4: 0xffc44d };
+
 /** Build a simple but recognizable first-person weapon model. */
 export function buildViewModel(def) {
   const g = new THREE.Group();
   const c = def.box || {};
-  const mat = new THREE.MeshStandardMaterial({ color: c.color || 0x2b2b2b, roughness: 0.6, metalness: 0.5 });
-  const darkMat = new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 0.5, metalness: 0.4 });
+  const mat = new THREE.MeshStandardMaterial({ color: c.color || 0x2b2b2b, roughness: 0.6, metalness: 0.5, envMapIntensity: 0.7 });
+  const darkMat = new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 0.5, metalness: 0.4, envMapIntensity: 0.7 });
 
   const body = new THREE.Mesh(new THREE.BoxGeometry(c.body[0], c.body[1], c.body[2]), mat);
   g.add(body);

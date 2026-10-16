@@ -63,7 +63,9 @@ first time (the browser will cache it).
 - **Attachments:** extended magazines (more rounds per mag) and compensators (less recoil)
   are lootable and shown in the backpack.
 - **Loot system:** weapons, ammo, armor, medkits, grenades and attachments spawn inside
-  buildings and across the map as floating, labeled pickups.
+  buildings and across the map as grounded pickups with floating labels. Weapons shine a
+  **rarity-colored light pillar** (gray → blue → purple → gold by power tier) so good loot
+  reads at a distance.
 - **AI opponents (up to 59):** a state machine (`rotate` / `loot` / `engage` / `push` /
   `cover`) that roams, **loots and upgrades its weapon**, detects enemies with line-of-sight,
   strafes to maintain ideal engagement range, throws the occasional grenade, fires in
@@ -74,16 +76,20 @@ first time (the browser will cache it).
   spawn true **ragdolls** (jointed limbs that topple and settle), grenades fire a shockwave
   that tosses bodies and debris, and explosions scatter **dynamic chunks**. Loaded lazily
   from a CDN; if it's unavailable the game falls back to the scripted collapse.
-- **Atmosphere:** a procedural sky with drifting clouds and a sun disc, exponential haze,
-  three lakes, crate/container/car/sandbag cover, windowed buildings and roads — all lit by
-  a warm directional sun with soft shadows and ACES tone mapping.
+- **Atmosphere:** image-based lighting plus a warm directional sun with soft shadows and
+  ACES tone mapping. Every match rolls a **day or dusk** lighting mood (sky, sun, haze and
+  exposure all shift). World-scale procedural textures — weathered plaster, ribbed shipping
+  containers, roof tiles, brushed metal, burlap sandbags — plus a procedural sky with
+  drifting clouds and a sun disc, exponential haze, three lakes, detailed wrecked cars,
+  crate/container/car/sandbag cover, windowed buildings and roads.
 - **The storm:** a multi-phase shrinking safe zone with a visible purple wall, a
   next-zone marker, escalating damage per phase, and distance-based storm audio.
 - **Real animated soldiers:** both your third-person body and every bot use a **skinned,
   skeletal soldier** (Mixamo rig) with real idle/walk/run clips driven by an animation mixer.
   While engaged they **raise the weapon into a shouldered aiming pose** (two-bone IK on the
   arms, blended over the animation) and the held weapon follows the right hand and stays
-  aimed forward. If the model can't load, the game falls back to a fully procedural
+  aimed forward. Bots spawn with varied uniform tints so the lobby doesn't look cloned.
+  If the model can't load, the game falls back to a fully procedural
   articulated humanoid rig (head, helmet, vest with mag pouches, shoulder/knee pads,
   backpack) with animated walk/run/idle/aim/death poses. First-person weapon bob/sway, ADS
   transitions, reload animations and recoil kick.

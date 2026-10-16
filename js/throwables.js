@@ -20,12 +20,12 @@ export class Grenade {
     const g = new THREE.Group();
     const body = new THREE.Mesh(
       new THREE.SphereGeometry(0.11, 10, 8),
-      new THREE.MeshStandardMaterial({ color: def.color, roughness: 0.6, metalness: 0.3 })
+      new THREE.MeshStandardMaterial({ color: def.color, roughness: 0.6, metalness: 0.3, envMapIntensity: 0.5 })
     );
     g.add(body);
     const band = new THREE.Mesh(
       new THREE.CylinderGeometry(0.115, 0.115, 0.05, 10),
-      new THREE.MeshStandardMaterial({ color: 0x22252a, roughness: 0.7 })
+      new THREE.MeshStandardMaterial({ color: 0x22252a, roughness: 0.7, envMapIntensity: 0.3 })
     );
     g.add(band);
     g.castShadow = true;
